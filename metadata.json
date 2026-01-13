@@ -1,0 +1,7 @@
+{
+  "name": "ZONA FIBA",
+  "description": "El hub dinámico de baloncesto para jugadores, entrenadores y fans. Consulta al Árbitro Virtual y Trivia de reglamento.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
