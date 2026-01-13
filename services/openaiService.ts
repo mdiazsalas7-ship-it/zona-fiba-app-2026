@@ -1,13 +1,20 @@
 import { FIBA_RULEBOOK } from '../data/fibaRules';
 
-// --- SEGURIDAD: Leemos la clave desde el archivo .env ---
-// Si no creaste el archivo .env, esto dará error. ¡Asegúrate de tenerlo!
-const API_KEY = import.meta.env.VITE_OPENROUTER_API_KEY; 
+// --- CONFIGURACIÓN DE SEGURIDAD HÍBRIDA ---
+// 1. Intenta leer del archivo secreto (.env)
+const ENV_KEY = import.meta.env.VITE_OPENROUTER_API_KEY;
+
+// 2. Si no existe (como en el celular), usa esta de respaldo.
+// PEGA TU CLAVE DENTRO DE LAS COMILLAS ABAJO ↓
+const BACKUP_KEY = "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"; 
+
+// Elegimos la que esté disponible
+const API_KEY = ENV_KEY || BACKUP_KEY;
 
 const SITE_URL = "https://zona-fiba.stackblitz.io";
 const APP_NAME = "Zona FIBA App";
 
-// --- MOTOR DE BÚSQUEDA RAG (Igual que en tu código React Native) ---
+// --- MOTOR DE BÚSQUEDA RAG ---
 const findRelevantRules = (userQuery: string) => {
   if (!userQuery) return "";
   const lowerQuery = userQuery.toLowerCase();
@@ -36,16 +43,17 @@ const findRelevantRules = (userQuery: string) => {
     })
     .filter(item => item.score > 0)
     .sort((a, b) => b.score - a.score)
-    .slice(0, 5) // Tomamos los 5 mejores
+    .slice(0, 5) 
     .map(item => `DOCUMENTO OFICIAL [${item.article.title}]:\n"${item.article.content}"`);
 
   return relevant.join('\n\n');
 };
 
 export const getVirtualJudgeVerdict = async (description: string) => {
-  // Validación de seguridad
-  if (!API_KEY) {
-    return "⚠️ ERROR DE CONFIGURACIÓN: No se encontró la API KEY. Asegúrate de crear el archivo .env con VITE_OPENROUTER_API_KEY.";
+  // --- DIAGNÓSTICO EN PANTALLA ---
+  if (!API_KEY || API_KEY.includes("PON_TU_CLAVE")) {
+    alert("⚠️ ERROR CRÍTICO: Falta la API Key.\nEdita 'src/services/openaiService.ts' y pon tu clave en BACKUP_KEY.");
+    return "Error de configuración: Sin llave de acceso.";
   }
 
   const contextData = findRelevantRules(description);
@@ -90,11 +98,15 @@ export const getVirtualJudgeVerdict = async (description: string) => {
     });
 
     if (!response.ok) {
-       // Si hay error, intentamos leer qué pasó
        const errorData = await response.json().catch(() => ({}));
        console.error("Error OpenRouter:", errorData);
-       if (response.status === 401) return "⛔ ERROR DE LLAVE: Tu API Key fue rechazada o suspendida. Revisa tu cuenta de OpenRouter.";
+       
+       if (response.status === 401) {
+           alert("⛔ ERROR DE LLAVE EN EL MÓVIL: La clave no es válida o fue revocada.");
+           return "Error 401: Clave inválida.";
+       }
        if (response.status === 402) return "💸 SIN SALDO: Tu cuenta de OpenRouter se quedó sin crédito.";
+       
        throw new Error(`Error API: ${response.status}`);
     }
 
@@ -103,6 +115,7 @@ export const getVirtualJudgeVerdict = async (description: string) => {
 
   } catch (error) {
     console.error("Error IA:", error);
-    return "📡 Error de conexión con el servidor de IA. Intenta de nuevo.";
+    // Mensaje específico para móviles en Venezuela si fallan los DNS
+    return "📡 Error de conexión. Si estás en Venezuela, prueba usando datos móviles en lugar de WiFi (o viceversa), a veces bloquean la conexión.";
   }
 };
