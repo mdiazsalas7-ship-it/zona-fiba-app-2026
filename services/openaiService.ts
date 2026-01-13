@@ -1,6 +1,9 @@
 import { FIBA_RULEBOOK } from '../data/fibaRules';
 
-const API_KEY = "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";
+// --- SEGURIDAD: Leemos la clave desde el archivo .env ---
+// Si no creaste el archivo .env, esto dará error. ¡Asegúrate de tenerlo!
+const API_KEY = import.meta.env.VITE_OPENROUTER_API_KEY; 
+
 const SITE_URL = "https://zona-fiba.stackblitz.io";
 const APP_NAME = "Zona FIBA App";
 
@@ -40,6 +43,11 @@ const findRelevantRules = (userQuery: string) => {
 };
 
 export const getVirtualJudgeVerdict = async (description: string) => {
+  // Validación de seguridad
+  if (!API_KEY) {
+    return "⚠️ ERROR DE CONFIGURACIÓN: No se encontró la API KEY. Asegúrate de crear el archivo .env con VITE_OPENROUTER_API_KEY.";
+  }
+
   const contextData = findRelevantRules(description);
   
   const systemInstruction = contextData 
@@ -81,7 +89,15 @@ export const getVirtualJudgeVerdict = async (description: string) => {
       })
     });
 
-    if (!response.ok) throw new Error("Error en OpenRouter");
+    if (!response.ok) {
+       // Si hay error, intentamos leer qué pasó
+       const errorData = await response.json().catch(() => ({}));
+       console.error("Error OpenRouter:", errorData);
+       if (response.status === 401) return "⛔ ERROR DE LLAVE: Tu API Key fue rechazada o suspendida. Revisa tu cuenta de OpenRouter.";
+       if (response.status === 402) return "💸 SIN SALDO: Tu cuenta de OpenRouter se quedó sin crédito.";
+       throw new Error(`Error API: ${response.status}`);
+    }
+
     const data = await response.json();
     return data.choices?.[0]?.message?.content || "Sin respuesta del Juez.";
 

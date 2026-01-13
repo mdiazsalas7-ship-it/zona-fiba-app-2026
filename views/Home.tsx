@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { AppView, UserProfile } from '../types';
 import { IMAGES } from '../constants';
@@ -11,6 +10,7 @@ interface HomeProps {
 const Home: React.FC<HomeProps> = ({ user, setView }) => {
   return (
     <div className="flex flex-col p-6 pt-12 gap-8 min-h-screen">
+      {/* HEADER DE USUARIO */}
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 rounded-2xl border-2 border-blue-500 overflow-hidden shadow-lg shadow-blue-500/20">
@@ -32,6 +32,7 @@ const Home: React.FC<HomeProps> = ({ user, setView }) => {
         </div>
       </div>
 
+      {/* BANNER PRINCIPAL */}
       <div className="relative w-full aspect-[16/9] rounded-3xl overflow-hidden border border-slate-800 shadow-2xl">
         <img 
           src={IMAGES.STITCH_REF} 
@@ -45,7 +46,9 @@ const Home: React.FC<HomeProps> = ({ user, setView }) => {
         </div>
       </div>
 
+      {/* GRID DE BOTONES REORDENADO */}
       <div className="grid gap-3">
+        {/* 1. REGLAMENTO */}
         <HubButton 
           icon={<img src={IMAGES.FIBA_LOGO_ICON} alt="FIBA" className="w-8 h-8 object-contain" />} 
           title="REGLAS FIBA 2024" 
@@ -53,23 +56,28 @@ const Home: React.FC<HomeProps> = ({ user, setView }) => {
           onClick={() => setView('REGLAS_FIBA')}
           primary
         />
+
+        {/* 2. TRIVIA (AHORA DE SEGUNDO) */}
+        <HubButton 
+          icon={<img src="https://i.postimg.cc/rFDJGG9b/unnamed.jpg" className="w-full h-full object-cover rounded-lg scale-110" alt="Trivia Icon" />} 
+          title="TRIVIA DESAFÍO" 
+          desc="Compite por el Ranking Mundial"
+          onClick={() => setView('TRIVIA')}
+        />
+        
+        {/* 3. JUEZ VIRTUAL (AHORA DE TERCERO) */}
         <HubButton 
           icon={<div className="relative w-full h-full"><img src={IMAGES.ARBITRO_ICON} className="w-full h-full object-cover rounded-lg" /></div>} 
           title="ÁRBITRO VIRTUAL" 
           desc={user.isSubscribed ? "Consultas Ilimitadas" : `Consultas: ${user.consultationsUsed}/5`}
           onClick={() => setView('JUEZ_VIRTUAL')}
         />
-        <HubButton 
-          icon={<svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52,2,12,2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z"/></svg>} 
-          title="TRIVIA DESAFÍO" 
-          desc="Compite por el Ranking Mundial"
-          onClick={() => setView('TRIVIA')}
-        />
       </div>
     </div>
   );
 };
 
+// Componente auxiliar para los botones
 const HubButton = ({ icon, title, desc, onClick, primary }: any) => (
   <button 
     onClick={onClick}

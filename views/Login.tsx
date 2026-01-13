@@ -1,9 +1,8 @@
 import React, { useState, useRef } from 'react';
 import { IMAGES } from '../constants';
-import { loginWithPseudonymAndPin } from '../services/auth'; // <--- Usamos la nueva función
-import { storage, auth } from '../lib/firebase';
+import { registerUser, loginUser, updateUserPhoto } from '../services/auth'; // <--- Importamos la nueva función
+import { storage } from '../lib/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { signInAnonymously, signOut } from 'firebase/auth';
 
 interface LoginProps {
   onLogin: (pseudonym: string, photo: string) => void;
@@ -12,68 +11,96 @@ interface LoginProps {
 const DEFAULT_PHOTO = "https://i.postimg.cc/hj2JLSd5/unnamed.jpg";
 
 const Login: React.FC<LoginProps> = ({ onLogin }) => {
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [pseudonym, setPseudonym] = useState('');
-  const [pin, setPin] = useState(''); // <--- NUEVO ESTADO PARA EL PIN
+
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState(DEFAULT_PHOTO);
   const [isLoading, setIsLoading] = useState(false);
-  const [statusText, setStatusText] = useState('ENTRAR A LA CANCHA');
+  const [statusText, setStatusText] = useState('');
   const [error, setError] = useState('');
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files[0]) {
       const file = event.target.files[0];
-      if (!file.type.startsWith('image/')) {
-          alert('Solo imágenes por favor.');
-          return;
+      // Validar tamaño (opcional, ej: máx 5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        alert("La imagen es muy pesada. Intenta con una más ligera.");
+        return;
       }
       setSelectedFile(file);
       setPreviewUrl(URL.createObjectURL(file));
     }
   };
 
-  const handleEnter = async () => {
-    if (!pseudonym.trim()) { setError("Falta el nombre"); return; }
-    if (pin.length < 4) { setError("El PIN debe ser de 4 números"); return; }
-    
-    setIsLoading(true);
+  const handleSubmit = async () => {
     setError('');
     
+    if (!email.includes('@')) { setError("Correo inválido"); return; }
+    if (password.length < 6) { setError("La contraseña debe tener al menos 6 caracteres"); return; }
+    if (isRegistering && !pseudonym.trim()) { setError("Falta el nombre de usuario"); return; }
+
+    setIsLoading(true);
+
     try {
-      // 1. Limpieza de sesión
-      await signOut(auth); 
+      if (isRegistering) {
+        // --- REGISTRO ---
+        setStatusText('CREANDO CUENTA...');
+        
+        // 1. Creamos el usuario base (con foto por defecto)
+        const user = await registerUser(email, password, pseudonym, DEFAULT_PHOTO);
+        let finalPhotoUrl = DEFAULT_PHOTO;
 
-      // 2. Preparar Foto
-      let finalPhotoUrl = previewUrl;
-      
-      // Si hay foto nueva, la subimos primero (pero necesitamos un ID temporal)
-      if (selectedFile) {
-         setStatusText('SUBIENDO FOTO...');
-         // Login temporal silencioso solo para poder subir la foto
-         const tempAuth = await signInAnonymously(auth);
-         const storageRef = ref(storage, `profile_photos/${tempAuth.user.uid}`);
-         await uploadBytes(storageRef, selectedFile);
-         finalPhotoUrl = await getDownloadURL(storageRef);
+        // 2. Si el usuario eligió una foto, la subimos y actualizamos
+        if (selectedFile) {
+            setStatusText('SUBIENDO FOTO...');
+            try {
+                // Referencia: profile_photos/UID_DEL_USUARIO
+                const storageRef = ref(storage, `profile_photos/${user.uid}`);
+                
+                // Subir archivo
+                await uploadBytes(storageRef, selectedFile);
+                
+                // Obtener URL pública
+                finalPhotoUrl = await getDownloadURL(storageRef);
+                
+                // GUARDAR URL EN LA BASE DE DATOS (El paso que faltaba)
+                setStatusText('FINALIZANDO...');
+                await updateUserPhoto(user.uid, finalPhotoUrl);
+                
+            } catch (uploadError) {
+                console.error("Error subiendo foto:", uploadError);
+                // Si falla la foto, no bloqueamos el registro, entramos con la default
+                alert("Cuenta creada, pero hubo un error subiendo la foto. Podrás cambiarla luego.");
+            }
+        }
+        
+        onLogin(pseudonym, finalPhotoUrl);
+
+      } else {
+        // --- LOGIN ---
+        setStatusText('INICIANDO SESIÓN...');
+        const user = await loginUser(email, password);
+        const userName = user.displayName || "Oficial";
+        const userPhoto = user.photoURL || DEFAULT_PHOTO;
+        
+        onLogin(userName, userPhoto);
       }
-
-      // 3. INTENTAR LOGIN O REGISTRO CON PIN
-      setStatusText('VERIFICANDO CLAVE...');
-      await loginWithPseudonymAndPin(pseudonym.trim(), pin.trim(), finalPhotoUrl);
-      
-      // 4. Éxito
-      onLogin(pseudonym, finalPhotoUrl);
 
     } catch (err: any) {
       console.error(err);
-      if (err.message === "WRONG_PIN") {
-        setError("¡NOMBRE OCUPADO! Si es tuyo, el PIN es incorrecto.");
-      } else {
-        setError("Error de conexión. Intenta de nuevo.");
-      }
+      if (err.code === 'auth/email-already-in-use') setError("Este correo ya está registrado.");
+      else if (err.code === 'auth/wrong-password') setError("Contraseña incorrecta.");
+      else if (err.code === 'auth/user-not-found') setError("No existe cuenta con este correo.");
+      else if (err.code === 'auth/invalid-email') setError("El correo está mal escrito.");
+      else setError("Error al entrar. Revisa tus datos.");
     } finally {
       setIsLoading(false);
-      setStatusText('ENTRAR A LA CANCHA');
+      setStatusText('');
     }
   };
 
@@ -83,66 +110,96 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
         <img src={IMAGES.STITCH_REF} alt="Fondo" className="w-full h-full object-cover grayscale scale-110" />
       </div>
 
-      <div className="z-10 w-full max-w-md flex flex-col items-center gap-8">
+      <div className="z-10 w-full max-w-md flex flex-col items-center gap-6">
         <div className="text-center">
-          <span className="text-blue-400 font-tech tracking-[0.3em] text-[10px] uppercase border px-4 py-1 border-blue-500/20 rounded-full">Acceso Seguro</span>
+          <span className="text-blue-400 font-tech tracking-[0.3em] text-[10px] uppercase border px-4 py-1 border-blue-500/20 rounded-full">
+            {isRegistering ? "Nuevo Ingreso" : "Acceso Oficiales"}
+          </span>
           <h1 className="mt-4 text-5xl font-black text-white italic leading-tight tracking-tighter">ZONA<br/><span className="text-blue-500">FIBA</span></h1>
         </div>
 
-        <div className="w-full space-y-6 bg-slate-900/60 p-6 rounded-3xl border border-slate-800 backdrop-blur-sm">
+        <div className="w-full space-y-5 bg-slate-900/60 p-8 rounded-3xl border border-slate-800 backdrop-blur-sm shadow-2xl">
           
-          {/* FOTO */}
-          <div className="flex flex-col items-center">
-            <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*" className="hidden" />
-            <button 
-                onClick={() => fileInputRef.current?.click()}
-                className="relative w-20 h-20 rounded-full overflow-hidden border-2 border-blue-500/50 hover:scale-105 transition-all"
-            >
-                <img src={previewUrl} className="w-full h-full object-cover" alt="Avatar" />
-            </button>
-            <p className="text-[10px] text-slate-500 mt-2 uppercase tracking-wider">Toca para cambiar foto</p>
-          </div>
+          {/* SELECCIÓN DE FOTO (Solo en Registro) */}
+          {isRegistering && (
+            <div className="flex flex-col items-center mb-4">
+                <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*" className="hidden" />
+                <button 
+                    onClick={() => fileInputRef.current?.click()}
+                    className="relative w-24 h-24 rounded-full overflow-hidden border-2 border-blue-500/50 hover:border-blue-400 hover:scale-105 transition-all shadow-[0_0_20px_rgba(59,130,246,0.3)] bg-black/40 group"
+                >
+                    <img src={previewUrl} className="w-full h-full object-cover" alt="Avatar" />
+                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                        <span className="text-2xl">📷</span>
+                    </div>
+                </button>
+                <p className="text-[9px] text-blue-400 mt-2 uppercase tracking-wider font-bold">Toca para subir foto</p>
+            </div>
+          )}
 
-          {/* CAMPOS DE TEXTO */}
+          {/* FORMULARIO */}
           <div className="space-y-4">
-            <div>
+            
+            {isRegistering && (
                 <input 
                   type="text" 
                   value={pseudonym}
                   onChange={(e) => setPseudonym(e.target.value)}
-                  placeholder="NOMBRE / SEUDÓNIMO"
-                  className="w-full bg-slate-950 border border-blue-900/30 rounded-xl p-4 text-white placeholder:text-slate-600 focus:outline-none focus:border-blue-500 text-center uppercase tracking-widest"
+                  placeholder="TU APODO / SEUDÓNIMO"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-4 text-white placeholder:text-slate-600 focus:outline-none focus:border-blue-500 text-center uppercase tracking-widest transition-all"
                   maxLength={15}
                 />
-            </div>
+            )}
 
-            <div>
-                <input 
-                  type="tel" 
-                  value={pin}
-                  onChange={(e) => setPin(e.target.value.replace(/\D/g,'').slice(0,4))} // Solo números, máx 4
-                  placeholder="PIN SECRETO (4 NÚMEROS)"
-                  className="w-full bg-slate-950 border border-blue-900/30 rounded-xl p-4 text-white placeholder:text-slate-600 focus:outline-none focus:border-green-500 text-center text-xl tracking-[0.5em] font-bold"
-                />
-                <p className="text-[9px] text-slate-500 text-center mt-1">
-                    Usa este PIN para recuperar tu cuenta después.
-                </p>
-            </div>
+            <input 
+              type="email" 
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="CORREO ELECTRÓNICO"
+              className="w-full bg-slate-950 border border-slate-700 rounded-xl p-4 text-white placeholder:text-slate-600 focus:outline-none focus:border-blue-500 text-center transition-all"
+            />
+
+            <input 
+              type="password" 
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="CONTRASEÑA"
+              className="w-full bg-slate-950 border border-slate-700 rounded-xl p-4 text-white placeholder:text-slate-600 focus:outline-none focus:border-blue-500 text-center font-bold tracking-widest transition-all"
+            />
             
             {error && (
-                <div className="bg-red-500/20 border border-red-500/50 p-2 rounded-lg">
-                    <p className="text-red-200 text-xs text-center font-bold">{error}</p>
+                <div className="bg-red-500/10 border border-red-500/30 p-2 rounded-lg animate-pulse">
+                    <p className="text-red-400 text-xs text-center font-bold">{error}</p>
                 </div>
             )}
 
             <button 
               disabled={isLoading}
-              onClick={handleEnter}
-              className={`w-full py-4 rounded-xl font-black text-sm tracking-[0.2em] flex items-center justify-center gap-2 transition-all uppercase ${isLoading ? 'bg-slate-700' : 'bg-blue-600 hover:bg-blue-500 shadow-lg shadow-blue-600/20'}`}
+              onClick={handleSubmit}
+              className={`w-full py-4 rounded-xl font-black text-sm tracking-[0.2em] flex items-center justify-center gap-2 transition-all uppercase ${isLoading ? 'bg-slate-700' : 'bg-blue-600 hover:bg-blue-500 shadow-lg shadow-blue-600/20 active:scale-95'}`}
             >
-              {isLoading ? statusText : 'ENTRAR AL JUEGO'}
+              {isLoading ? (
+                  <span className="flex items-center gap-2">
+                      <span className="animate-spin">⏳</span> {statusText}
+                  </span>
+              ) : (isRegistering ? 'CREAR PERFIL' : 'ENTRAR AL JUEGO')}
             </button>
           </div>
+
+          <div className="pt-4 border-t border-slate-800 text-center">
+            <button 
+                onClick={() => {
+                    setIsRegistering(!isRegistering);
+                    setError('');
+                }}
+                className="text-xs text-slate-400 hover:text-white transition-colors uppercase tracking-wider font-bold"
+            >
+                {isRegistering 
+                    ? "¿Ya tienes cuenta? Inicia Sesión" 
+                    : "¿Eres nuevo? Crea tu cuenta aquí"}
+            </button>
+          </div>
+
         </div>
       </div>
     </div>

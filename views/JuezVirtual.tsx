@@ -1,15 +1,17 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { UserProfile } from '../types';
 import { getVirtualJudgeVerdict } from '../services/openaiService';
-import { IMAGES } from '../constants'; // Asegúrate de tener las imágenes aquí o usa las URLs directas abajo
+import { IMAGES } from '../constants';
 
-// --- CONFIGURACIÓN VISUAL (Igual que en tu RN) ---
+// --- CONFIGURACIÓN VISUAL ---
 const REFEREE_ICON_URL = "https://i.postimg.cc/hPLX3zVD/download.jpg";
 const CHAT_BACKGROUND = "https://i.postimg.cc/D0by0N97/unnamed.jpg";
+const FREE_LIMIT = 5; // Límite de consultas gratuitas
 
 interface JuezVirtualProps {
   user: UserProfile;
   onUpdateUsage: (count: number, subscribed: boolean) => void;
+  onSubscribe: () => void; // Función para ir a pagar
 }
 
 interface Message {
@@ -18,7 +20,7 @@ interface Message {
   sender: 'user' | 'bot';
 }
 
-const JuezVirtual: React.FC<JuezVirtualProps> = ({ user, onUpdateUsage }) => {
+const JuezVirtual: React.FC<JuezVirtualProps> = ({ user, onUpdateUsage, onSubscribe }) => {
   const [inputText, setInputText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
@@ -29,10 +31,13 @@ const JuezVirtual: React.FC<JuezVirtualProps> = ({ user, onUpdateUsage }) => {
     }
   ]);
   
-  // Referencia para el scroll automático
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Función para bajar el scroll cuando llega un mensaje
+  // --- LÓGICA DE LÍMITE ---
+  // Si no paga Y ya usó 5 o más, se bloquea.
+  const isLimitReached = !user.isSubscribed && user.consultationsUsed >= FREE_LIMIT;
+  const consultasRestantes = Math.max(0, FREE_LIMIT - user.consultationsUsed);
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
@@ -42,10 +47,12 @@ const JuezVirtual: React.FC<JuezVirtualProps> = ({ user, onUpdateUsage }) => {
   }, [messages, isTyping]);
 
   const handleSend = async () => {
+    // Protección de seguridad: Si está bloqueado, no hace nada.
+    if (isLimitReached) return;
     if (!inputText.trim()) return;
 
     const userMsgText = inputText;
-    setInputText(''); // Limpiar input
+    setInputText(''); 
 
     // 1. Agregar mensaje del usuario
     const newUserMsg: Message = { id: Date.now().toString(), text: userMsgText, sender: 'user' };
@@ -60,8 +67,11 @@ const JuezVirtual: React.FC<JuezVirtualProps> = ({ user, onUpdateUsage }) => {
     const newBotMsg: Message = { id: (Date.now() + 1).toString(), text: aiResponse, sender: 'bot' };
     setMessages(prev => [...prev, newBotMsg]);
 
-    // Actualizar estadísticas (sin bloquear)
-    onUpdateUsage(user.consultationsUsed + 1, true);
+    // 4. Actualizar estadísticas
+    // Solo aumentamos el contador si NO es suscriptor (los suscriptores tienen infinito, pero si quieres contarles también, quita el if)
+    if (!user.isSubscribed) {
+        onUpdateUsage(user.consultationsUsed + 1, user.isSubscribed);
+    }
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -79,22 +89,37 @@ const JuezVirtual: React.FC<JuezVirtualProps> = ({ user, onUpdateUsage }) => {
         className="absolute inset-0 z-0 opacity-40 bg-cover bg-center"
         style={{ backgroundImage: `url(${CHAT_BACKGROUND})` }}
       ></div>
-      
-      {/* CAPA OSCURA */}
       <div className="absolute inset-0 z-0 bg-slate-900/80"></div>
 
       {/* --- HEADER --- */}
-      <div className="relative z-10 flex items-center p-4 pt-6 bg-slate-900/90 border-b border-slate-700 backdrop-blur-md shadow-lg">
-        <div className="w-10 h-10 rounded-full overflow-hidden border border-yellow-500 mr-3 shadow-[0_0_10px_rgba(251,191,36,0.3)]">
-          <img src={REFEREE_ICON_URL} alt="Juez" className="w-full h-full object-cover" />
+      <div className="relative z-10 flex items-center justify-between p-4 pt-6 bg-slate-900/90 border-b border-slate-700 backdrop-blur-md shadow-lg">
+        <div className="flex items-center">
+            <div className="w-10 h-10 rounded-full overflow-hidden border border-yellow-500 mr-3 shadow-[0_0_10px_rgba(251,191,36,0.3)]">
+            <img src={REFEREE_ICON_URL} alt="Juez" className="w-full h-full object-cover" />
+            </div>
+            <div>
+            <h1 className="text-white text-lg font-bold tracking-tight">JUEZ EXPERTO</h1>
+            <div className="flex items-center gap-1.5">
+                <span className={`w-2 h-2 rounded-full animate-pulse ${user.isSubscribed ? 'bg-green-500' : isLimitReached ? 'bg-red-500' : 'bg-yellow-500'}`}></span>
+                <p className="text-slate-400 text-xs font-semibold tracking-wider">
+                    {user.isSubscribed ? "MODO PRO (ILIMITADO)" : `GRATIS: ${consultasRestantes} RESTANTES`}
+                </p>
+            </div>
+            </div>
         </div>
-        <div>
-          <h1 className="text-white text-lg font-bold tracking-tight">JUEZ EXPERTO</h1>
-          <div className="flex items-center gap-1.5">
-            <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-            <p className="text-yellow-500 text-xs font-semibold tracking-wider">EN LÍNEA • FIBA & OBRI</p>
-          </div>
-        </div>
+        
+        {/* Barra de Progreso (Solo usuarios Gratis) */}
+        {!user.isSubscribed && (
+            <div className="flex flex-col items-end">
+                <span className="text-[10px] text-slate-500 uppercase font-tech">Nivel de Uso</span>
+                <div className="w-16 h-1.5 bg-slate-700 rounded-full mt-1 overflow-hidden">
+                    <div 
+                        className={`h-full ${isLimitReached ? 'bg-red-600' : 'bg-blue-500'}`} 
+                        style={{ width: `${(user.consultationsUsed / FREE_LIMIT) * 100}%` }}
+                    ></div>
+                </div>
+            </div>
+        )}
       </div>
 
       {/* --- ÁREA DE CHAT --- */}
@@ -104,14 +129,11 @@ const JuezVirtual: React.FC<JuezVirtualProps> = ({ user, onUpdateUsage }) => {
             key={msg.id} 
             className={`flex w-full ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
           >
-            {/* Avatar del Bot (Izquierda) */}
             {msg.sender === 'bot' && (
               <div className="w-8 h-8 rounded-full overflow-hidden border border-slate-600 mr-2 flex-shrink-0 self-end mb-1">
                 <img src={REFEREE_ICON_URL} className="w-full h-full object-cover" />
               </div>
             )}
-
-            {/* Burbuja de Mensaje */}
             <div 
               className={`max-w-[85%] p-3.5 rounded-2xl shadow-md text-sm leading-relaxed whitespace-pre-wrap ${
                 msg.sender === 'user' 
@@ -121,19 +143,9 @@ const JuezVirtual: React.FC<JuezVirtualProps> = ({ user, onUpdateUsage }) => {
             >
               {msg.text}
             </div>
-
-            {/* Avatar del Usuario (Derecha) */}
-            {msg.sender === 'user' && (
-              <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center ml-2 flex-shrink-0 self-end mb-1 border border-blue-400">
-                <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                </svg>
-              </div>
-            )}
           </div>
         ))}
 
-        {/* Indicador de "Escribiendo..." */}
         {isTyping && (
           <div className="flex w-full justify-start items-center ml-10">
             <div className="bg-slate-800/80 border border-slate-700 px-4 py-2 rounded-full flex items-center gap-2">
@@ -145,49 +157,73 @@ const JuezVirtual: React.FC<JuezVirtualProps> = ({ user, onUpdateUsage }) => {
           </div>
         )}
         
-        {/* Elemento invisible para forzar el scroll al final */}
         <div ref={messagesEndRef} />
       </div>
 
-      {/* --- BARRA DE ENTRADA --- */}
-      <div className="relative z-10 p-3 pb-6 bg-slate-900/95 border-t border-slate-700 flex items-end gap-2">
-        {/* Botón de Micrófono (Simulado) */}
-        <button 
-          onClick={() => alert("Por favor usa el dictado de tu teclado móvil.")}
-          className="p-3 bg-slate-800 rounded-full text-yellow-500 hover:bg-slate-700 transition-colors border border-slate-700"
-        >
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-          </svg>
-        </button>
+      {/* --- BARRA DE ENTRADA O BLOQUEO DE PAGO --- */}
+      <div className="relative z-10 bg-slate-900/95 border-t border-slate-700">
+        
+        {isLimitReached ? (
+            // --- PANTALLA DE BLOQUEO (Límite Alcanzado) ---
+            <div className="p-6 flex flex-col items-center justify-center text-center space-y-3 bg-red-950/30 backdrop-blur-md animate-in fade-in slide-in-from-bottom-5">
+                <div className="w-12 h-12 bg-red-600/20 rounded-full flex items-center justify-center border border-red-500 mb-1 animate-pulse">
+                    <svg className="w-6 h-6 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                    </svg>
+                </div>
+                <h3 className="text-white font-black italic uppercase text-lg">Límite Alcanzado</h3>
+                <p className="text-slate-400 text-xs max-w-[250px]">
+                    Has agotado tus 5 consultas gratuitas. Suscríbete para tener acceso ilimitado al Juez IA.
+                </p>
+                <button 
+                    onClick={onSubscribe}
+                    className="w-full py-3 bg-gradient-to-r from-amber-500 to-orange-600 rounded-xl font-black text-white text-sm uppercase tracking-widest shadow-lg shadow-orange-500/20 active:scale-95 transition-transform mt-2"
+                >
+                    Desbloquear por $1/Mes
+                </button>
+            </div>
+        ) : (
+            // --- BARRA DE ESCRITURA NORMAL ---
+            <div className="p-3 pb-6 flex items-end gap-2">
+                {/* Botón Micrófono (Fake) */}
+                <button 
+                onClick={() => alert("Usa el dictado de tu teclado.")}
+                className="p-3 bg-slate-800 rounded-full text-yellow-500 hover:bg-slate-700 transition-colors border border-slate-700"
+                >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                </svg>
+                </button>
 
-        {/* Input de Texto */}
-        <div className="flex-1 bg-slate-800/80 rounded-2xl border border-slate-700 flex items-center">
-          <textarea
-            value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
-            onKeyDown={handleKeyPress}
-            placeholder="Consulta la jugada..."
-            className="w-full bg-transparent text-white p-3 max-h-24 focus:outline-none resize-none placeholder:text-slate-500"
-            rows={1}
-            style={{ minHeight: '44px' }}
-          />
-        </div>
+                {/* Input Texto */}
+                <div className="flex-1 bg-slate-800/80 rounded-2xl border border-slate-700 flex items-center">
+                <textarea
+                    value={inputText}
+                    onChange={(e) => setInputText(e.target.value)}
+                    onKeyDown={handleKeyPress}
+                    placeholder="Consulta la jugada..."
+                    className="w-full bg-transparent text-white p-3 max-h-24 focus:outline-none resize-none placeholder:text-slate-500"
+                    rows={1}
+                    style={{ minHeight: '44px' }}
+                />
+                </div>
 
-        {/* Botón de Enviar */}
-        <button 
-          onClick={handleSend}
-          disabled={!inputText.trim() || isTyping}
-          className={`p-3 rounded-full transition-all flex items-center justify-center ${
-            inputText.trim() && !isTyping 
-              ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-500/20' 
-              : 'bg-slate-700 text-slate-500 cursor-not-allowed'
-          }`}
-        >
-          <svg className="w-5 h-5 ml-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-          </svg>
-        </button>
+                {/* Botón Enviar */}
+                <button 
+                onClick={handleSend}
+                disabled={!inputText.trim() || isTyping}
+                className={`p-3 rounded-full transition-all flex items-center justify-center ${
+                    inputText.trim() && !isTyping 
+                    ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-500/20' 
+                    : 'bg-slate-700 text-slate-500 cursor-not-allowed'
+                }`}
+                >
+                <svg className="w-5 h-5 ml-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                </svg>
+                </button>
+            </div>
+        )}
       </div>
     </div>
   );

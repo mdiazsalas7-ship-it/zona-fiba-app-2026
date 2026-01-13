@@ -1,53 +1,24 @@
 import { auth, db } from '../lib/firebase';
-import { signInAnonymously, signOut as firebaseSignOut } from 'firebase/auth';
-import { doc, getDoc, setDoc, deleteDoc, collection, query, where, getDocs } from 'firebase/firestore'; 
+import { 
+  createUserWithEmailAndPassword, 
+  signInWithEmailAndPassword, 
+  signOut as firebaseSignOut, 
+  updateProfile 
+} from 'firebase/auth';
+import { doc, setDoc, updateDoc } from 'firebase/firestore'; // <--- Agregamos updateDoc
 import { UserProfile } from '../types'; 
 
-// Función Maestra: Registra nuevo O recupera cuenta vieja si tienes el PIN
-export const loginWithPseudonymAndPin = async (pseudonym: string, pin: string, photoUrl: string) => {
+// --- 1. REGISTRO (Crear cuenta nueva) ---
+export const registerUser = async (email: string, pass: string, pseudonym: string, photoUrl: string) => {
   try {
-    // 1. Buscamos si el nombre ya existe en la base de datos
-    const usersRef = collection(db, "profiles");
-    const q = query(usersRef, where("pseudonym", "==", pseudonym));
-    const querySnapshot = await getDocs(q);
+    const userCredential = await createUserWithEmailAndPassword(auth, email, pass);
+    const user = userCredential.user;
 
-    // 2. Iniciamos sesión anónima en este dispositivo (Usuario Nuevo Temporal)
-    const result = await signInAnonymously(auth);
-    const currentUser = result.user;
-    const currentUserRef = doc(db, 'profiles', currentUser.uid);
+    await updateProfile(user, { displayName: pseudonym, photoURL: photoUrl });
 
-    // CASO A: El nombre YA EXISTE (¿Es el dueño recuperando cuenta?)
-    if (!querySnapshot.empty) {
-      const oldUserDoc = querySnapshot.docs[0]; // Agarramos el perfil viejo
-      const oldUserData = oldUserDoc.data() as UserProfile;
-
-      // Verificamos el PIN
-      if (oldUserData.pin === pin) {
-        // ¡CLAVE CORRECTA! -> MUDANZA DE DATOS
-        // Copiamos los datos viejos al usuario nuevo de este teléfono
-        await setDoc(currentUserRef, {
-          ...oldUserData,
-          photo: photoUrl, // Actualizamos la foto si subió una nueva
-        });
-
-        // Borramos el perfil viejo para que no quede basura duplicada
-        // (Solo si el ID es diferente, para no borrarnos a nosotros mismos)
-        if (oldUserDoc.id !== currentUser.uid) {
-           await deleteDoc(oldUserDoc.ref);
-        }
-
-        return currentUser; // Entra como el Rey
-      } else {
-        // CLAVE INCORRECTA
-        throw new Error("WRONG_PIN"); 
-      }
-    }
-
-    // CASO B: El nombre ESTÁ LIBRE (Usuario Nuevo)
-    // Creamos perfil desde cero
-    const newProfile: any = { // Usamos 'any' para poder meter el pin sin error de tipos
+    const newProfile: UserProfile = {
       pseudonym: pseudonym,
-      pin: pin, // <--- GUARDAMOS LA CLAVE
+      email: email,
       photo: photoUrl,
       level: 'Novato',
       exp: 0,
@@ -55,16 +26,44 @@ export const loginWithPseudonymAndPin = async (pseudonym: string, pin: string, p
       consultationsUsed: 0,
       bestScore: 0,
       bestStreak: 0,
-      stats: { jugadas: 0, precision: 0 }
+      stats: { jugadas: 0, precision: 0 },
+      createdAt: new Date().toISOString()
     };
     
-    await setDoc(currentUserRef, newProfile);
-    return currentUser;
-
-  } catch (error) {
-    console.error("Error Auth:", error);
+    await setDoc(doc(db, 'profiles', user.uid), newProfile);
+    
+    return user;
+  } catch (error: any) {
+    console.error("Error Registro:", error);
     throw error;
   }
+};
+
+// --- 2. LOGIN ---
+export const loginUser = async (email: string, pass: string) => {
+  try {
+    const userCredential = await signInWithEmailAndPassword(auth, email, pass);
+    return userCredential.user;
+  } catch (error: any) {
+    console.error("Error Login:", error);
+    throw error;
+  }
+};
+
+// --- 3. ACTUALIZAR FOTO (Función Nueva) ---
+// Esta función pega el link de la foto en la base de datos después de subirla
+export const updateUserPhoto = async (uid: string, photoUrl: string) => {
+    try {
+        // 1. Actualizar en Firebase Auth (para que salga al iniciar sesión)
+        if (auth.currentUser) {
+            await updateProfile(auth.currentUser, { photoURL: photoUrl });
+        }
+        // 2. Actualizar en la Base de Datos (para el Ranking)
+        const userRef = doc(db, 'profiles', uid);
+        await updateDoc(userRef, { photo: photoUrl });
+    } catch (error) {
+        console.error("Error actualizando foto:", error);
+    }
 };
 
 export const logout = () => firebaseSignOut(auth);
